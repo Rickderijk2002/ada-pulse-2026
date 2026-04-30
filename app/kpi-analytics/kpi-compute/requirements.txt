@@ -1,0 +1,8 @@
+functions-framework==3.5.0
+pandas>=2.1.0
+google-cloud-storage==2.13.0
+google-cloud-bigquery==3.14.0
+google-cloud-pubsub==2.18.4
+cloudevents>=1.2.0
+pyarrow
+db-dtypes
