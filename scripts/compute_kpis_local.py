@@ -3,30 +3,19 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Optional
 
-import functions_framework
 import numpy as np
 import pandas as pd
-from cloudevents.http import CloudEvent
-from google.cloud import bigquery, pubsub_v1, storage
-
-# gcloud functions deploy compute_kpis --runtime python311 --region=us-central1 --gen2 --entry-point=compute_kpis --trigger-event-filters="type=google.cloud.storage.object.v1.finalized" --trigger-event-filters="bucket=pulse-demo-bronze" --trigger-location=us --allow-unauthenticated
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-storage_client = storage.Client()
-bq_client = bigquery.Client()
-publisher = pubsub_v1.PublisherClient()
-
-PROJECT_ID = "ada26-pulse-project"
-TOPIC_PATH = publisher.topic_path(PROJECT_ID, "kpis-computed")
-BQ_TABLE_ID = f"{PROJECT_ID}.kpi_analytics_gold.gold_kpi_snapshots"
-TENANT_ID = "pulse-demo"
-FINANCIAL_CSV = "financial_clean.csv"
-SALES_MARKETING_CSV = "sales_marketing_clean.csv"
-READY_MARKER = "ready.json"
+BASE_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_FINANCIAL = BASE_DIR / "data" / "ingest" / "financial_clean.csv"
+DEFAULT_SALES = BASE_DIR / "data" / "ingest" / "sales_marketing_clean.csv"
+DEFAULT_OUTPUT_DIR = BASE_DIR / "data" / "kpi"
 
 WEEK_FREQ = "W-SUN"
 
@@ -44,27 +33,6 @@ GOLD_COLUMNS = [
     "trace_id",
 ]
 
-BQ_SCHEMA = [
-    bigquery.SchemaField("tenant_id", "STRING", mode="REQUIRED"),
-    bigquery.SchemaField("period_start", "DATE", mode="REQUIRED"),
-    bigquery.SchemaField("period_end", "DATE", mode="REQUIRED"),
-    bigquery.SchemaField("period_grain", "STRING", mode="REQUIRED"),
-    bigquery.SchemaField("domain", "STRING", mode="REQUIRED"),
-    bigquery.SchemaField("metric_name", "STRING", mode="REQUIRED"),
-    bigquery.SchemaField("metric_value", "FLOAT", mode="NULLABLE"),
-    bigquery.SchemaField("metric_unit", "STRING", mode="REQUIRED"),
-    bigquery.SchemaField("computed_at", "TIMESTAMP", mode="REQUIRED"),
-    bigquery.SchemaField("run_id", "STRING", mode="REQUIRED"),
-    bigquery.SchemaField("trace_id", "STRING", mode="REQUIRED"),
-]
-
-
-def read_csv_from_gcs(bucket_name: str, blob_path: str) -> pd.DataFrame:
-    bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(blob_path)
-    with blob.open("r") as fh:
-        return pd.read_csv(fh)
-
 
 def _week_grouper() -> pd.Grouper:
     return pd.Grouper(key="date", freq=WEEK_FREQ, label="right", closed="right")
@@ -76,7 +44,8 @@ def _period_bounds(period_end: pd.Timestamp) -> tuple[date, date]:
     return start, end
 
 
-def _validate_financial(df: pd.DataFrame) -> pd.DataFrame:
+def load_financial(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path)
     expected = {
         "date",
         "tenant_id",
@@ -89,19 +58,18 @@ def _validate_financial(df: pd.DataFrame) -> pd.DataFrame:
     missing = expected - set(df.columns)
     if missing:
         raise ValueError("financial CSV missing columns: %s" % sorted(missing))
-    out = df.copy()
-    out["date"] = pd.to_datetime(out["date"], utc=False)
-    return out.sort_values(["tenant_id", "date"]).reset_index(drop=True)
+    df["date"] = pd.to_datetime(df["date"], utc=False)
+    return df.sort_values(["tenant_id", "date"]).reset_index(drop=True)
 
 
-def _validate_sales(df: pd.DataFrame) -> pd.DataFrame:
+def load_sales(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path)
     expected = {"date", "tenant_id", "leads", "new_deals", "churn_rate"}
     missing = expected - set(df.columns)
     if missing:
         raise ValueError("sales CSV missing columns: %s" % sorted(missing))
-    out = df.copy()
-    out["date"] = pd.to_datetime(out["date"], utc=False)
-    return out.sort_values(["tenant_id", "date"]).reset_index(drop=True)
+    df["date"] = pd.to_datetime(df["date"], utc=False)
+    return df.sort_values(["tenant_id", "date"]).reset_index(drop=True)
 
 
 def weekly_financial_wide(df: pd.DataFrame) -> pd.DataFrame:
@@ -137,9 +105,7 @@ def weekly_financial_wide(df: pd.DataFrame) -> pd.DataFrame:
     if profit_from_ledger:
         wide["weekly_profit"] = wide["_profit"].astype(np.float64)
     else:
-        wide["weekly_profit"] = (wide["_revenue"] - wide["_expenses"]).astype(
-            np.float64
-        )
+        wide["weekly_profit"] = (wide["_revenue"] - wide["_expenses"]).astype(np.float64)
 
     wide["_revenue_prev"] = wide.groupby("tenant_id")["_revenue"].shift(1)
     denom = wide["_revenue_prev"].replace({0.0: np.nan})
@@ -189,10 +155,12 @@ def financial_wide_to_long(
     long["metric_unit"] = long["metric_name"].map(units)
     long["period_grain"] = "weekly"
     long["domain"] = "financial"
-    long["computed_at"] = computed_at
+    long["computed_at"] = computed_at.isoformat().replace("+00:00", "Z")
     long["run_id"] = run_id
     long["trace_id"] = trace_id
-    return long[GOLD_COLUMNS].sort_values(["tenant_id", "period_end", "metric_name"])
+    return long[GOLD_COLUMNS].sort_values(
+        ["tenant_id", "period_end", "metric_name"]
+    )
 
 
 def weekly_sales_wide(df: pd.DataFrame) -> pd.DataFrame:
@@ -255,19 +223,21 @@ def sales_wide_to_long(
     long["metric_unit"] = long["metric_name"].map(units)
     long["period_grain"] = "weekly"
     long["domain"] = "sales_crm"
-    long["computed_at"] = computed_at
+    long["computed_at"] = computed_at.isoformat().replace("+00:00", "Z")
     long["run_id"] = run_id
     long["trace_id"] = trace_id
-    return long[GOLD_COLUMNS].sort_values(["tenant_id", "period_end", "metric_name"])
+    return long[GOLD_COLUMNS].sort_values(
+        ["tenant_id", "period_end", "metric_name"]
+    )
 
 
-def _empty_gold_frame() -> pd.DataFrame:
+def empty_gold_frame() -> pd.DataFrame:
     return pd.DataFrame(columns=GOLD_COLUMNS)
 
 
 def build_kpi_dataframe(
-    financial_df: pd.DataFrame,
-    sales_df: pd.DataFrame,
+    financial_path: Path,
+    sales_path: Path,
     run_id: Optional[str] = None,
     trace_id: Optional[str] = None,
 ) -> pd.DataFrame:
@@ -275,8 +245,14 @@ def build_kpi_dataframe(
     run_id = run_id or str(uuid.uuid4())
     trace_id = trace_id or str(uuid.uuid4())
 
-    financial_raw = _validate_financial(financial_df)
-    sales_raw = _validate_sales(sales_df)
+    logger.info(
+        "Loading financial %s sales %s (week rollup %s, label right week-end)",
+        financial_path,
+        sales_path,
+        WEEK_FREQ,
+    )
+    financial_raw = load_financial(financial_path)
+    sales_raw = load_sales(sales_path)
 
     fin_wide = weekly_financial_wide(financial_raw)
     sal_wide = weekly_sales_wide(sales_raw)
@@ -296,7 +272,7 @@ def build_kpi_dataframe(
         parts.append(sales_wide_to_long(sal_wide, run_id, trace_id, computed_at))
 
     if not parts:
-        return _empty_gold_frame()
+        return empty_gold_frame()
 
     out = pd.concat(parts, ignore_index=True)
 
@@ -312,101 +288,32 @@ def build_kpi_dataframe(
     ).reset_index(drop=True)
 
 
-def write_kpis_to_bigquery(kpis: pd.DataFrame) -> None:
-    if kpis.empty:
-        raise ValueError("Refusing to truncate gold table with empty KPI frame")
+def main() -> None:
+    financial = DEFAULT_FINANCIAL
+    sales = DEFAULT_SALES
+    output_dir = DEFAULT_OUTPUT_DIR
+    output_name = "gold_kpi_snapshots_local.csv"
+    run_id = "0"
+    trace_id = "0"
 
-    payload = kpis.copy()
-    payload["period_start"] = pd.to_datetime(payload["period_start"]).dt.date
-    payload["period_end"] = pd.to_datetime(payload["period_end"]).dt.date
-    payload["computed_at"] = pd.to_datetime(payload["computed_at"], utc=True)
-    payload["metric_value"] = payload["metric_value"].astype(np.float64)
-
-    job_config = bigquery.LoadJobConfig(
-        schema=BQ_SCHEMA,
-        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-        time_partitioning=bigquery.TimePartitioning(field="period_end"),
-        clustering_fields=["tenant_id", "metric_name"],
-    )
-
-    logger.info(
-        "Loading %s KPI rows into %s (WRITE_TRUNCATE)", len(payload), BQ_TABLE_ID
-    )
-    load_job = bq_client.load_table_from_dataframe(
-        payload,
-        BQ_TABLE_ID,
-        job_config=job_config,
-    )
-    load_job.result()
-    logger.info("BigQuery load job completed: %s", load_job.job_id)
-
-
-def publish_kpis_computed(run_id: str, trace_id: str) -> None:
-    publisher.publish(
-        TOPIC_PATH,
-        b"KPI computation completed",
-        tenant_id=TENANT_ID,
+    kpis = build_kpi_dataframe(
+        financial_path=financial,
+        sales_path=sales,
         run_id=run_id,
         trace_id=trace_id,
     )
-    logger.info("Published kpis-computed (run_id=%s trace_id=%s)", run_id, trace_id)
 
-
-@functions_framework.cloud_event
-def compute_kpis(cloud_event: CloudEvent):
-    bucket_name = cloud_event.data["bucket"]
-    object_path = cloud_event.data["name"]
-
-    if not object_path.endswith(READY_MARKER):
-        logger.info("Ignoring non-ready file: %s", object_path)
-        return "Ignored non-ready file", 200
-
-    run_prefix = object_path[: -len(READY_MARKER)]
-    run_id = str(uuid.uuid4())
-    trace_id = cloud_event["id"] if "id" in cloud_event else str(uuid.uuid4())
-
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_path = output_dir / output_name
+    kpis.to_csv(out_path, index=False)
     logger.info(
-        "Starting KPI run (bucket=%s prefix=%s run_id=%s trace_id=%s)",
-        bucket_name,
-        run_prefix,
-        run_id,
-        trace_id,
+        "Wrote %s rows to %s (run_id=%s trace_id=%s)",
+        len(kpis),
+        out_path,
+        kpis.loc[0, "run_id"] if len(kpis) else run_id,
+        kpis.loc[0, "trace_id"] if len(kpis) else trace_id,
     )
 
-    try:
-        financial_df = read_csv_from_gcs(bucket_name, run_prefix + FINANCIAL_CSV)
-        sales_df = read_csv_from_gcs(bucket_name, run_prefix + SALES_MARKETING_CSV)
-        logger.info(
-            "Loaded CSVs from GCS (financial_rows=%s sales_rows=%s)",
-            len(financial_df),
-            len(sales_df),
-        )
-    except Exception as exc:
-        logger.exception("Error loading CSVs from GCS: %s", exc)
-        return "Error loading data", 500
 
-    try:
-        kpis = build_kpi_dataframe(
-            financial_df=financial_df,
-            sales_df=sales_df,
-            run_id=run_id,
-            trace_id=trace_id,
-        )
-        logger.info("Built KPI frame rows=%s", len(kpis))
-    except Exception as exc:
-        logger.exception("Error computing KPIs: %s", exc)
-        return "Error computing KPIs", 500
-
-    try:
-        write_kpis_to_bigquery(kpis)
-    except Exception as exc:
-        logger.exception("Error loading KPIs to BigQuery: %s", exc)
-        return "Error inserting KPIs into BigQuery", 500
-
-    try:
-        publish_kpis_computed(run_id=run_id, trace_id=trace_id)
-    except Exception as exc:
-        logger.exception("Error publishing to Pub/Sub: %s", exc)
-        return "Error publishing to Pub/Sub", 500
-
-    return "KPI computation completed", 200
+if __name__ == "__main__":
+    main()
