@@ -64,4 +64,4 @@ gcloud auth application-default set-quota-project ada26-pulse-project
 
 ## Notes
 
-- Nothing Yet
+- Pipeline status for teammates: [CURRENT_STATE.md](CURRENT_STATE.md) (ingest, KPI function, serving API).
