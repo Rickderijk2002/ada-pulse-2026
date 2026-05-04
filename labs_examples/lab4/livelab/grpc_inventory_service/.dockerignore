@@ -1,0 +1,5 @@
+.git
+inventory_service_client.py
+grpc_stub_generator.sh
+Dockerfile*
+.venv

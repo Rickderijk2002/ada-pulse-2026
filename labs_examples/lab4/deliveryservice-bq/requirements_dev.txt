@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+sqlalchemy
+sqlalchemy-utils
+sqlalchemy-bigquery
+pytest
