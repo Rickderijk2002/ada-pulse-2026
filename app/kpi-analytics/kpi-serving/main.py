@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI
+from fastapi_mcp import FastApiMCP
 
 from router_kpis import router as kpis_router
 
@@ -25,3 +26,24 @@ def health() -> dict[str, str]:
 
 
 app.include_router(kpis_router, prefix="/kpis")
+
+# --- MCP Integration ---
+# Exposes selected KPI endpoints as agent-callable MCP tools.
+# Available at: /mcp  (same port as the REST API)
+mcp = FastApiMCP(
+    app,
+    name="Pulse KPI Tools",
+    description=(
+        "MCP tools for retrieving KPI snapshots from the Pulse gold layer. "
+        "Use get_latest_kpis to get the most recent values and "
+        "get_kpi_history for trend data over multiple weeks."
+    ),
+    include_operations=[
+        "list_kpi_domains",
+        "list_kpi_metrics",
+        "get_latest_kpis",
+        "get_latest_kpi_single",
+        "get_kpi_history",
+    ],
+)
+mcp.mount_http(app, mount_path="/mcp")

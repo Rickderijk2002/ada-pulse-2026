@@ -36,7 +36,7 @@ AllowedTenantDep = Annotated[str, Depends(require_allowed_tenant)]
 RepoDep = Annotated[BigQueryRepository, Depends(get_repository)]
 
 
-@router.get("/domains", response_model=DomainsResponse)
+@router.get("/domains", operation_id="list_kpi_domains", response_model=DomainsResponse)
 def list_domains(tenant_ok: AllowedTenantDep, repo: RepoDep) -> DomainsResponse:
     try:
         domains = repo.query_domains(tenant_ok)
@@ -46,7 +46,7 @@ def list_domains(tenant_ok: AllowedTenantDep, repo: RepoDep) -> DomainsResponse:
     return DomainsResponse(tenant_id=tenant_ok, domains=domains)
 
 
-@router.get("/metrics", response_model=MetricsResponse)
+@router.get("/metrics", operation_id="list_kpi_metrics", response_model=MetricsResponse)
 def list_metrics(
     tenant_ok: AllowedTenantDep,
     repo: RepoDep,
@@ -63,7 +63,7 @@ def list_metrics(
     )
 
 
-@router.get("/latest", response_model=LatestListResponse)
+@router.get("/latest", operation_id="get_latest_kpis", response_model=LatestListResponse)
 def list_latest(
     tenant_ok: AllowedTenantDep,
     repo: RepoDep,
@@ -82,7 +82,7 @@ def list_latest(
     return LatestListResponse(tenant_id=tenant_ok, items=items)
 
 
-@router.get("/latest/{domain}/{metric_name}", response_model=KpiSnapshotItem)
+@router.get("/latest/{domain}/{metric_name}", operation_id="get_latest_kpi_single", response_model=KpiSnapshotItem)
 def get_latest_single(
     tenant_ok: AllowedTenantDep,
     repo: RepoDep,
@@ -105,6 +105,7 @@ def get_latest_single(
 
 @router.get(
     "/metrics/{domain}/{metric_name}/history",
+    operation_id="get_kpi_history",
     response_model=HistoryResponse,
 )
 def get_metric_history(
