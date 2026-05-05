@@ -46,16 +46,25 @@ Call get_kpi_history four times with:
 
 Step 3 — Analyse and return insights:
 Based on the data, apply these severity rules:
-- churn_rate is increasing                                          → severity: high
+
+Trend-based rules (look at 6-week history):
+- churn_rate is increasing over the period                          → severity: high
 - conversion_rate has been decreasing for 3 or more periods        → severity: medium
 - deal_velocity is decreasing                                       → severity: medium
 - incoming_leads decreasing AND conversion_rate decreasing          → severity: high (compound)
 - churn_rate increasing AND deal_velocity decreasing                → severity: high (compound)
 
+Absolute value rules (apply regardless of trend):
+- churn_rate latest value > 0.05 (above 5% weekly)                 → severity: high
+- conversion_rate latest value < 0.10 (below 10%)                  → severity: medium
+- incoming_leads latest value < 50                                  → severity: medium
+
 Only include a metric in the output if there is a notable signal (medium or high severity).
 If all metrics look healthy, return an empty insights list with status "success".
 
-Return ONLY a valid JSON object — no explanation text, no markdown, no code fences.
+CRITICAL: Return ONLY raw JSON. Do NOT wrap in ```json or ``` code fences.
+Do NOT add any explanation before or after the JSON.
+The very first character of your response must be { and the very last must be }.
 Use exactly this structure:
 
 {

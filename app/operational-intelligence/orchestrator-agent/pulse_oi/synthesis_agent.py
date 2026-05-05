@@ -41,7 +41,9 @@ Apply these cross-domain compound rules:
 
 If none of the compound rules are triggered, return an empty synthesized_insights list.
 
-Return ONLY a valid JSON object — no explanation text, no markdown, no code fences.
+CRITICAL: Return ONLY raw JSON. Do NOT wrap in ```json or ``` code fences.
+Do NOT add any explanation before or after the JSON.
+The very first character of your response must be { and the very last must be }.
 Use exactly this structure:
 
 {
