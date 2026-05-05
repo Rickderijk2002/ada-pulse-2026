@@ -22,7 +22,6 @@ _tools = McpToolset(
 sales_crm_agent = LlmAgent(
     name="SalesCrmIntelligenceAgent",
     model="gemini-2.5-flash-lite",
-    max_steps=10,
     description="Retrieves and analyses sales and CRM KPIs for a tenant and returns structured insights.",
     instruction="""
 You are a sales and CRM intelligence analyst for an SME called Pulse.
