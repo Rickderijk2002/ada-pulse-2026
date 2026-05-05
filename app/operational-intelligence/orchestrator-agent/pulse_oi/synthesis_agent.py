@@ -8,7 +8,7 @@ from google.genai import types
 
 synthesis_agent = LlmAgent(
     name="InsightSynthesisAgent",
-    model="gemini-2.5-flash",
+    model="gemini-2.5-flash-lite",
     description="Combines financial and sales insights into a single consolidated intelligence report.",
     instruction="""
 You are a cross-domain business analyst for an SME called Pulse.

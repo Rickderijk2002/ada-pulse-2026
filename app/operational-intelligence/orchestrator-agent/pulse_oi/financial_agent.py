@@ -21,7 +21,7 @@ _tools = McpToolset(
 
 financial_agent = LlmAgent(
     name="FinancialIntelligenceAgent",
-    model="gemini-2.5-flash",
+    model="gemini-2.5-flash-lite",
     description="Retrieves and analyses financial KPIs for a tenant and returns structured insights.",
     instruction="""
 You are a financial intelligence analyst for an SME called Pulse.
