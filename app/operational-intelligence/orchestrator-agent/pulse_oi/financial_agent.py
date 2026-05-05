@@ -33,13 +33,13 @@ Call get_latest_kpis with:
   tenant_id = "pulse-demo"
   domain    = "financial"
 
-Step 2 — Retrieve 6-week history for these metrics:
-Call get_kpi_history with tenant_id="pulse-demo", domain="financial", limit=6 for each:
-  metric_name = "burn_rate"
-  metric_name = "cash_flow"
-  metric_name = "revenue_growth"
-  metric_name = "outstanding_invoices"
-  metric_name = "weekly_profit"
+Step 2 — Retrieve 6-week history for key metrics:
+Call get_kpi_history five times in one batch, all with tenant_id="pulse-demo", domain="financial", limit=6:
+  call 1: metric_name = "burn_rate"
+  call 2: metric_name = "cash_flow"
+  call 3: metric_name = "revenue_growth"
+  call 4: metric_name = "outstanding_invoices"
+  call 5: metric_name = "weekly_profit"
 
 Step 3 — Apply severity rules and return insights.
 

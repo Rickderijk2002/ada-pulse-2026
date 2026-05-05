@@ -33,12 +33,12 @@ Call get_latest_kpis with:
   tenant_id = "pulse-demo"
   domain    = "sales_crm"
 
-Step 2 — Retrieve 6-week history for these metrics:
-Call get_kpi_history with tenant_id="pulse-demo", domain="sales_crm", limit=6 for each:
-  metric_name = "churn_rate"
-  metric_name = "conversion_rate"
-  metric_name = "deal_velocity"
-  metric_name = "incoming_leads"
+Step 2 — Retrieve 6-week history for key metrics:
+Call get_kpi_history four times in one batch, all with tenant_id="pulse-demo", domain="sales_crm", limit=6:
+  call 1: metric_name = "churn_rate"
+  call 2: metric_name = "conversion_rate"
+  call 3: metric_name = "deal_velocity"
+  call 4: metric_name = "incoming_leads"
 
 Step 3 — Apply severity rules and return insights.
 
