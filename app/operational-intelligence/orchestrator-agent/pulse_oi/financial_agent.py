@@ -22,6 +22,7 @@ _tools = McpToolset(
 financial_agent = LlmAgent(
     name="FinancialIntelligenceAgent",
     model="gemini-2.5-flash-lite",
+    max_steps=10,
     description="Retrieves and analyses financial KPIs for a tenant and returns structured insights.",
     instruction="""
 You are a financial intelligence analyst for an SME called Pulse.
@@ -57,6 +58,9 @@ ABSOLUTE VALUE rules (apply to latest value regardless of trend):
 
 Only include a metric if a rule triggers. If everything looks healthy return an empty insights list.
 
+After completing Steps 1, 2, and 3, output your final JSON and STOP.
+Do NOT call any tools again after producing the JSON output.
+
 CRITICAL: Return ONLY raw JSON. Do NOT wrap in ```json or ``` code fences.
 Do NOT add any explanation before or after the JSON.
 The very first character of your response must be { and the very last must be }.
@@ -86,7 +90,6 @@ Use exactly this structure:
     generate_content_config=types.GenerateContentConfig(
         temperature=0.1,
         max_output_tokens=4000,
-        response_mime_type="application/json",
         http_options=types.HttpOptions(
             retry_options=types.HttpRetryOptions(
                 initial_delay=1.0,
