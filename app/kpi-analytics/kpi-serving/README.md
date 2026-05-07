@@ -80,29 +80,9 @@ IAM for the runtime service account:
 The KPI Serving API is also exposed as an MCP server so that ADK agents can call KPI tools directly
 without needing to construct HTTP requests themselves.
 
-### What was added (`main.py`)
-
-```python
-from fastapi_mcp import FastApiMCP
-
-mcp = FastApiMCP(
-    app,
-    name="Pulse KPI Tools",
-    description="MCP tools for retrieving KPI snapshots from the Pulse gold layer.",
-    include_operations=[
-        "list_kpi_domains",
-        "list_kpi_metrics",
-        "get_latest_kpis",
-        "get_latest_kpi_single",
-        "get_kpi_history",
-    ],
-)
-mcp.mount_http(app, mount_path="/mcp")
-```
-
-This mounts the MCP endpoint at `/mcp` on the same port as the REST API.
-The `fastapi-mcp` library automatically converts the selected FastAPI route operations into
-MCP-callable tools using the existing OpenAPI schema — no separate MCP server process needed.
+`fastapi-mcp` wraps the selected FastAPI route operations into MCP-callable tools using the
+existing OpenAPI schema. No separate MCP server process is needed — the `/mcp` endpoint is
+mounted on the same port as the REST API.
 
 ### MCP tools exposed
 
@@ -114,41 +94,14 @@ MCP-callable tools using the existing OpenAPI schema — no separate MCP server 
 | `get_latest_kpi_single` | `GET /kpis/{tenant_id}/latest/{domain}/{metric_name}` |
 | `get_kpi_history` | `GET /kpis/{tenant_id}/metrics/{domain}/{metric_name}/history` |
 
-### Agent connection (ADK)
+### What was added
 
-The Operational Intelligence agents connect to the MCP server using:
+- `fastapi-mcp>=0.3.0` added to `requirements.txt`
+- MCP setup added to `main.py`: initialises `FastApiMCP` and mounts it at `/mcp`
 
-```python
-from google.adk.tools.mcp_tool import McpToolset, StreamableHTTPConnectionParams
-
-_tools = McpToolset(
-    connection_params=StreamableHTTPConnectionParams(
-        url=KPI_MCP_URL,   # e.g. https://pulse-kpi-serving-mcp-.../mcp
-        timeout=120.0,
-    ),
-    tool_filter=["get_latest_kpis", "get_kpi_history"],
-)
-```
-
-### Cloud Run deployment (MCP-enabled version)
-
-The MCP-enabled version is deployed as a separate Cloud Run service to avoid affecting the
-original `pulse-kpi-serving` deployment:
-
-```bash
-gcloud run deploy pulse-kpi-serving-mcp \
-  --source app/kpi-analytics/kpi-serving \
-  --region europe-west4 \
-  --project ada26-pulse-project \
-  --allow-unauthenticated \
-  --set-env-vars "GOOGLE_CLOUD_PROJECT=ada26-pulse-project,BQ_DATASET=kpi_analytics_gold,BQ_TABLE=gold_kpi_snapshots"
-```
-
-MCP endpoint is available at: `https://pulse-kpi-serving-mcp-266532618671.europe-west4.run.app/mcp`
-
-### Dependency added
-
-`fastapi-mcp>=0.3.0` was added to `requirements.txt`.
+The Operational Intelligence agents connect to this endpoint via `McpToolset` with
+`StreamableHTTPConnectionParams`. The MCP URL is passed in via the `KPI_MCP_URL` environment
+variable in the orchestrator service.
 
 ## Health
 
