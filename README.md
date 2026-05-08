@@ -273,14 +273,34 @@ app/operational-intelligence/orchestrator-agent/
     synthesis_agent.py          - InsightSynthesisAgent
 ```
 
-Start the ADK web UI to inspect and test the agents interactively:
+### Agent overview
 
-```powershell
-cd "app\operational-intelligence\orchestrator-agent"
-adk web
+**FinancialIntelligenceAgent** (`financial_agent.py`)
+Retrieves financial KPIs via MCP and applies severity rules across trend and absolute value checks.
+Metrics monitored: `burn_rate`, `cash_flow`, `revenue_growth`, `outstanding_invoices`, `weekly_profit`
+Output stored in session state as `financial_insights`.
+
+**SalesCrmIntelligenceAgent** (`sales_crm_agent.py`)
+Retrieves sales and CRM KPIs via MCP and applies severity rules across trend and absolute value checks.
+Metrics monitored: `churn_rate`, `conversion_rate`, `deal_velocity`, `incoming_leads`
+Output stored in session state as `sales_crm_insights`.
+
+**InsightSynthesisAgent** (`synthesis_agent.py`)
+Reads `financial_insights` and `sales_crm_insights` from session state. Applies cross-domain
+compound risk rules and produces a single consolidated report with `final_severity`.
+Output stored in session state as `synthesized_insights`.
+
+**Agent composition** (`agent.py`)
+
+```text
+SequentialAgent: OperationalIntelligencePipeline
+  |-- ParallelAgent: ParallelKpiAnalysis
+  |       |-- FinancialIntelligenceAgent
+  |       └-- SalesCrmIntelligenceAgent
+  └-- InsightSynthesisAgent
 ```
 
-Or run via uvicorn (the ADK web UI is embedded in app.py):
+Start the ADK web UI to inspect and test the agents interactively:
 
 ```powershell
 cd "app\operational-intelligence\orchestrator-agent"
@@ -341,6 +361,106 @@ Expected pipeline behavior:
 2. Both agents call get_latest_kpis and get_kpi_history via MCP.
 3. InsightSynthesisAgent combines both outputs into a consolidated report.
 4. Result is returned as JSON with final_severity and cross-domain insights.
+```
+
+## Cloud Deployment
+
+The Operational Intelligence layer is deployed to GCP Cloud Run. The following describes
+what was built and how the full cloud flow works.
+
+### Deployed Cloud Run services
+
+| Service | Description |
+|---|---|
+| `pulse-kpi-serving-mcp` | KPI Serving API with MCP endpoint at `/mcp` — reads from BigQuery Gold Layer |
+| `pulse-orchestrator` | Operational Intelligence Orchestrator — runs the ADK agent pipeline |
+
+Both services are deployed in the same GCP region.
+
+### Pub/Sub topics
+
+| Topic | Purpose |
+|---|---|
+| `kpis-computed` | Published by the KPI Cloud Function when a KPI computation completes |
+| `insights-ready` | Published by the Orchestrator when the full agent pipeline completes |
+
+### Pub/Sub push subscription
+
+A push subscription named `kpis-computed-push-orchestrator` connects the `kpis-computed` topic
+to the Orchestrator's `/pubsub/kpis-computed` endpoint. When the KPI Cloud Function publishes
+to `kpis-computed`, GCP automatically POSTs the message to the Orchestrator on Cloud Run.
+
+### Full cloud flow
+
+```text
+GCS upload (financial_clean.csv + sales_marketing_clean.csv + ready.json)
+        |
+        v
+KPI Computation Cloud Function (triggered by GCS object finalized)
+        |  writes
+        v
+BigQuery Gold Layer: kpi_analytics_gold.gold_kpi_snapshots
+        |  publishes
+        v
+Pub/Sub topic: kpis-computed
+        |  push subscription
+        v
+Cloud Run: pulse-orchestrator  POST /pubsub/kpis-computed
+        |
+        v
+ParallelAgent: FinancialIntelligenceAgent + SalesCrmIntelligenceAgent
+        |  both call MCP tools
+        v
+Cloud Run: pulse-kpi-serving-mcp  /mcp
+        |  queries
+        v
+BigQuery Gold Layer
+        |
+        v
+InsightSynthesisAgent
+        |  publishes
+        v
+Pub/Sub topic: insights-ready
+```
+
+### Triggering the pipeline manually on Cloud Run
+
+Trigger via REST (synchronous — waits for full result):
+
+```powershell
+$body = @{ tenant_id = "pulse-demo"; run_id = "manual-001" } | ConvertTo-Json
+Invoke-RestMethod -Method Post `
+  -Uri "<orchestrator-cloud-run-url>/pipeline/run" `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+Trigger via Pub/Sub (simulates the KPI Cloud Function firing):
+
+```powershell
+gcloud pubsub topics publish kpis-computed `
+  --message="KPI computation completed" `
+  --attribute=tenant_id=pulse-demo,run_id=kpi-run-001,trace_id=trace-001 `
+  --project <your-project-id>
+```
+
+### Checking results on Cloud Run
+
+Pull results from `insights-ready` (create a debug subscription first):
+
+```powershell
+gcloud pubsub subscriptions create insights-ready-debug `
+  --topic insights-ready --project <your-project-id>
+
+gcloud pubsub subscriptions pull insights-ready-debug `
+  --auto-ack --limit 5 --project <your-project-id>
+```
+
+Check orchestrator logs:
+
+```powershell
+gcloud run services logs read pulse-orchestrator `
+  --region <your-region> --project <your-project-id> --limit 80
 ```
 
 ## Troubleshooting
