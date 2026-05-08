@@ -12,13 +12,11 @@ ada-pulse-2026/
     infra/                         # GCS upload and ingest helpers
     kpi-analytics/
       kpi-compute/                 # KPI Cloud Function
-      kpi-serving/                 # FastAPI read API over BigQuery Gold Layer
-      kpi-mcp-server/              # Local MCP wrapper around kpi-serving
+      kpi-serving/                 # FastAPI read API over BigQuery Gold Layer + MCP endpoint at /mcp (main.py)
     operational-intelligence/
-      orchestrator-agent/          # Local ADK agents and FastAPI orchestrator
+      orchestrator-agent/          # FastAPI orchestrator + ADK agents (pulse_oi/)
     reporting-delivery/
   data/
-    mockaroo/
     ingest/
     kpi/
   docs/
@@ -31,28 +29,21 @@ ada-pulse-2026/
 The local Operational Intelligence flow is:
 
 ```text
-KPI Serving API, port 8080
--> KPI MCP Server, port 8091
--> Financial Intelligence Agent
--> Sales CRM Intelligence Agent
+KPI Serving API + MCP endpoint (/mcp), port 8080
+-> Financial Intelligence Agent + Sales CRM Intelligence Agent (parallel)
 -> Insight Synthesis Agent
--> Local Orchestrator, port 8090
+-> Orchestrator, port 8081
 ```
 
-The MVP follows the Lab 8 Sequential Pipeline Pattern:
+The pipeline uses the ADK Parallel Fan-Out/Gather pattern followed by synthesis:
 
 ```text
-Financial Intelligence Agent
--> Sales CRM Intelligence Agent
--> Insight Synthesis Agent
+ParallelAgent: Financial Intelligence Agent + Sales CRM Intelligence Agent
+-> SequentialAgent: Insight Synthesis Agent
 ```
 
-A later version can use the Lab 8 Parallel Fan-Out/Gather Pattern:
-
-```text
-Financial Intelligence Agent + Sales CRM Intelligence Agent
--> Insight Synthesis Agent
-```
+The MCP endpoint is embedded directly in the KPI Serving API (`kpi-serving/main.py`).
+There is no separate MCP server process.
 
 ## Prerequisites
 
@@ -141,48 +132,31 @@ Data files, `pyproject.toml`, and `uv.lock` should only be staged when those cha
 
 Do not commit `.env` files.
 
-The KPI MCP server uses:
-
-```text
-app/kpi-analytics/kpi-mcp-server/.env
-```
-
-Expected local content:
-
-```text
-KPI_DATA_API_URL=http://127.0.0.1:8080
-MCP_HOST=0.0.0.0
-MCP_PORT=8091
-```
-
-The Operational Intelligence orchestrator and agents use:
+The Operational Intelligence orchestrator uses:
 
 ```text
 app/operational-intelligence/orchestrator-agent/.env
 ```
 
-Expected local content:
+Copy from `.env.example` and fill in your values. Expected local content:
 
 ```text
 GOOGLE_GENAI_USE_VERTEXAI=true
-GOOGLE_CLOUD_PROJECT=ada26-pulse-project
-GOOGLE_CLOUD_LOCATION=europe-west1
-MODEL_NAME=gemini-2.5-flash-lite
-KPI_MCP_URL=http://127.0.0.1:8091/mcp
+GOOGLE_CLOUD_PROJECT=<your-project-id>
+KPI_MCP_URL=http://127.0.0.1:8080/mcp
+INSIGHTS_READY_TOPIC=insights-ready
 ```
 
-Access-token based configuration, for example `GCP_ACCESS_TOKEN`, is lab/demo style only. Access tokens expire and should not be committed.
+`KPI_MCP_URL` points to the MCP endpoint embedded in the KPI Serving API — same port (8080), path `/mcp`.
 
 ## Terminal Layout
 
 Use separate terminals for each long-running service.
 
 ```text
-Terminal 1: KPI Serving API, port 8080
-Terminal 2: KPI MCP Server, port 8091
-Terminal 3: ADK web or individual agent test
-Terminal 4: Local orchestrator, port 8090
-Terminal 5: curl or Invoke-RestMethod tests
+Terminal 1: KPI Serving API + MCP, port 8080
+Terminal 2: ADK web UI or orchestrator, port 8081
+Terminal 3: curl or Invoke-RestMethod tests
 ```
 
 ## 1. Start KPI Serving API
@@ -234,251 +208,129 @@ curl "http://127.0.0.1:8080/kpis/pulse-demo/metrics/financial/burn_rate/history?
 
 The tenant path must be `pulse-demo`. Other tenant values return `404`.
 
-## 2. Start KPI MCP Server
+## 2. Validate MCP endpoint
 
-The KPI MCP server follows the Lab 6 REST-to-MCP pattern:
+The MCP endpoint is embedded in the KPI Serving API (`kpi-serving/main.py`) using `fastapi-mcp`.
+No separate MCP server process is needed. Once the KPI Serving API is running, the MCP endpoint
+is available at the same port under `/mcp`.
 
-```text
-KPI Serving API
--> REST wrapper endpoints
--> MCP tools
--> ADK agents
-```
-
-Location:
-
-```text
-app/kpi-analytics/kpi-mcp-server/
-  app.py
-  requirements.txt
-  .env
-  .gitignore
-```
-
-Install service requirements without changing `pyproject.toml`:
-
-```powershell
-cd "C:\Projects\Advanced Data Architectures\ada-pulse-2026"
-uv pip install -r app\kpi-analytics\kpi-mcp-server\requirements.txt
-```
-
-Start the service:
-
-```powershell
-cd "C:\Projects\Advanced Data Architectures\ada-pulse-2026\app\kpi-analytics\kpi-mcp-server"
-$env:KPI_DATA_API_URL="http://127.0.0.1:8080"
-uv run python -m uvicorn app:app --reload --port 8091
-```
-
-Local URLs:
-
-```text
-API:          http://127.0.0.1:8091
-MCP endpoint: http://127.0.0.1:8091/mcp
-```
-
-REST wrapper checks:
-
-```powershell
-curl http://127.0.0.1:8091/health
-curl http://127.0.0.1:8091/tools/kpi/domains/pulse-demo
-curl "http://127.0.0.1:8091/tools/kpi/metrics/pulse-demo?domain=financial"
-curl "http://127.0.0.1:8091/tools/kpi/latest/pulse-demo?domain=financial"
-curl "http://127.0.0.1:8091/tools/kpi/history/pulse-demo/financial/burn_rate?periods=6"
-```
-
-MCP tools exposed through `operation_id`:
+MCP tools exposed:
 
 ```text
 list_kpi_domains
-list_kpis_in_domain
+list_kpi_metrics
 get_latest_kpis
+get_latest_kpi_single
 get_kpi_history
 ```
 
-Validate MCP with MCP Inspector:
+Validate with MCP Inspector:
 
 ```powershell
 npx @modelcontextprotocol/inspector
 ```
 
-Use this MCP endpoint in the Inspector:
+Connect the Inspector to:
 
 ```text
-http://127.0.0.1:8091/mcp
+http://127.0.0.1:8080/mcp
 ```
 
-Test these MCP tool calls:
+Test tool calls:
 
 ```text
-list_kpi_domains tenant_id=pulse-demo
-list_kpis_in_domain tenant_id=pulse-demo domain=financial
 get_latest_kpis tenant_id=pulse-demo domain=financial
-get_kpi_history tenant_id=pulse-demo domain=financial metric_name=burn_rate periods=6
+get_kpi_history tenant_id=pulse-demo domain=financial metric_name=burn_rate limit=6
 ```
 
 Continue only after the MCP tools return KPI data.
 
 ## 3. Validate ADK Agents
 
-Location:
+The agents are all defined inside the `pulse_oi` package:
 
 ```text
 app/operational-intelligence/orchestrator-agent/
-  financial_agent/
-    agent.py
-  sales_crm_agent/
-    agent.py
-  synthesis_agent/
-    agent.py
-  mcp_tools.py
-  orchestrator/
+  app.py                        - FastAPI app and pipeline runner
+  Dockerfile
+  requirements.txt
+  .env.example
+  pulse_oi/
     __init__.py
-    pipeline.py
-  app.py
+    agent.py                    - root_agent: SequentialAgent (ParallelAgent + synthesis)
+    financial_agent.py          - FinancialIntelligenceAgent
+    sales_crm_agent.py          - SalesCrmIntelligenceAgent
+    synthesis_agent.py          - InsightSynthesisAgent
 ```
 
-The plain `adk` command may point to a different CLI in this environment. Use the Google ADK Python module entrypoint.
-
-Run each agent directly:
+Start the ADK web UI to inspect and test the agents interactively:
 
 ```powershell
-cd "C:\Projects\Advanced Data Architectures\ada-pulse-2026\app\operational-intelligence\orchestrator-agent"
-uv run python -m google.adk.cli run financial_agent
-uv run python -m google.adk.cli run sales_crm_agent
-uv run python -m google.adk.cli run synthesis_agent
+cd "app\operational-intelligence\orchestrator-agent"
+adk web
 ```
 
-When prompted for a user name, use a simple local value:
-
-```text
-local-user
-```
-
-Example financial prompt:
-
-```text
-Use tenant_id pulse-demo. Retrieve latest financial KPIs and 6 periods of history for burn_rate, cash_flow, revenue_growth, and outstanding_invoices. Return strict JSON only.
-```
-
-Start ADK web:
+Or run via uvicorn (the ADK web UI is embedded in app.py):
 
 ```powershell
-cd "C:\Projects\Advanced Data Architectures\ada-pulse-2026\app\operational-intelligence\orchestrator-agent"
-uv run python -m google.adk.cli web --port 8000 .
+cd "app\operational-intelligence\orchestrator-agent"
+uvicorn app:app --host 0.0.0.0 --port 8081
 ```
 
-Open:
+Open the ADK web UI at `http://127.0.0.1:8081/dev-ui`
 
-```text
-http://127.0.0.1:8000
-```
+The ADK app name is `pulse_oi`. The root agent runs the full pipeline:
+`ParallelAgent` (financial + sales) followed by `InsightSynthesisAgent`.
 
-The ADK web UI should list:
+## 4. Run the Pipeline
 
-```text
-financial_agent
-sales_crm_agent
-synthesis_agent
-```
-
-If ADK web shows `No agents found in current folder`, the command was started from the wrong folder. Stop the server, move to `app/operational-intelligence/orchestrator-agent`, and start it again.
-
-The `orchestrator/` folder is not an ADK app. It contains pipeline code for the FastAPI orchestrator.
-
-## 4. Start Local Orchestrator
-
-The local orchestrator is exposed by:
-
-```text
-app/operational-intelligence/orchestrator-agent/app.py
-```
-
-It calls:
-
-```text
-orchestrator/pipeline.py
-```
+The orchestrator is `app.py` in `orchestrator-agent/`. The pipeline logic is implemented directly
+in `app.py` using the ADK `Runner` with `InMemorySessionService` — there is no separate
+`orchestrator/` subfolder.
 
 Endpoints:
 
 ```text
-GET /health
+GET  /health
 POST /pipeline/run
-GET /pipeline/{run_id}/status
 POST /pubsub/kpis-computed
 ```
 
-The local `/pubsub/kpis-computed` endpoint is currently a placeholder. Use `/pipeline/run` for local manual testing.
-
-Before starting the orchestrator, verify:
+Before starting, verify:
 
 ```text
-1. KPI Serving API runs on http://127.0.0.1:8080.
-2. KPI MCP Server runs on http://127.0.0.1:8091.
-3. MCP Inspector can call the KPI tools.
-4. orchestrator-agent/.env contains Vertex/Gemini and KPI_MCP_URL settings.
+1. KPI Serving API is running on port 8080.
+2. MCP Inspector can call the KPI tools on port 8080 /mcp.
+3. orchestrator-agent/.env contains GOOGLE_GENAI_USE_VERTEXAI, GOOGLE_CLOUD_PROJECT, and KPI_MCP_URL.
 ```
 
-Start the orchestrator:
+The orchestrator runs as part of `app.py` — the same process also serves the ADK web UI.
+Start it with:
 
 ```powershell
-cd "C:\Projects\Advanced Data Architectures\ada-pulse-2026\app\operational-intelligence\orchestrator-agent"
-uv run python -m uvicorn app:app --reload --port 8090
+cd "app\operational-intelligence\orchestrator-agent"
+uvicorn app:app --host 0.0.0.0 --port 8081
 ```
 
-Health check:
+Manual pipeline run:
 
 ```powershell
-curl http://127.0.0.1:8090/health
-```
-
-Expected response:
-
-```json
-{"status":"ok","service":"operational-intelligence-orchestrator"}
-```
-
-Manual pipeline run, PowerShell safe version:
-
-```powershell
-$body = @{
-  tenant_id = "pulse-demo"
-  trace_id = "trace-local-001"
-  run_id = "manual-run-001"
-  source_kpi_run_id = "kpi-run-local-001"
-} | ConvertTo-Json
+$body = @{ tenant_id = "pulse-demo"; run_id = "manual-run-001" } | ConvertTo-Json
 
 Invoke-RestMethod `
   -Method Post `
-  -Uri "http://127.0.0.1:8090/pipeline/run" `
+  -Uri "http://127.0.0.1:8081/pipeline/run" `
   -ContentType "application/json" `
   -Body $body
-```
-
-Check run status:
-
-```powershell
-curl http://127.0.0.1:8090/pipeline/manual-run-001/status
 ```
 
 Expected pipeline behavior:
 
 ```text
-1. Financial agent returns strict JSON.
-2. Sales CRM agent returns strict JSON.
-3. Synthesis agent combines both outputs.
-4. Orchestrator returns one combined insight payload.
-```
-
-The pipeline strips markdown JSON code fences from agent output before JSON parsing. This handles common LLM responses that wrap JSON in triple backticks with a `json` label.
-
-Example pattern:
-
-```text
-triple-backtick json
-{ ... }
-triple-backtick
+1. FinancialIntelligenceAgent and SalesCrmIntelligenceAgent run in parallel.
+2. Both agents call get_latest_kpis and get_kpi_history via MCP.
+3. InsightSynthesisAgent combines both outputs into a consolidated report.
+4. Result is returned as JSON with final_severity and cross-domain insights.
 ```
 
 ## Troubleshooting
@@ -524,19 +376,15 @@ Use this order before committing local Operational Intelligence work:
 
 ```text
 1. git status reviewed.
-2. gcloud project is ada26-pulse-project.
-3. ADC quota project is ada26-pulse-project.
-4. KPI Serving API /health works.
+2. gcloud project is set correctly.
+3. ADC quota project is set correctly.
+4. KPI Serving API /health works on port 8080.
 5. KPI Serving API returns financial and sales_crm data.
-6. KPI MCP Server /health works.
-7. MCP REST wrapper endpoints return KPI data.
-8. MCP Inspector lists and executes the KPI tools.
-9. ADK run works for financial_agent.
-10. ADK run works for sales_crm_agent.
-11. ADK run works for synthesis_agent.
-12. Local orchestrator /health works.
-13. Local orchestrator /pipeline/run returns a combined payload.
-14. Only intentional files are staged.
+6. MCP Inspector connects to /mcp on port 8080 and executes get_latest_kpis and get_kpi_history.
+7. orchestrator-agent/.env has correct GOOGLE_GENAI_USE_VERTEXAI, GOOGLE_CLOUD_PROJECT, KPI_MCP_URL.
+8. Orchestrator /health works on port 8081.
+9. Orchestrator /pipeline/run returns a consolidated synthesis payload.
+10. Only intentional files are staged.
 ```
 
 ## Notes
