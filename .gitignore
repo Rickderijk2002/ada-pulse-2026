@@ -14,3 +14,6 @@ wheels/
 
 # ADK session database (local only)
 sessions.db
+
+#VSCode Folder
+/.VSCode
