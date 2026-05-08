@@ -14,7 +14,17 @@ ada-pulse-2026/
       kpi-compute/                 # KPI Cloud Function
       kpi-serving/                 # FastAPI read API over BigQuery Gold Layer + MCP endpoint at /mcp (main.py)
     operational-intelligence/
-      orchestrator-agent/          # FastAPI orchestrator + ADK agents (pulse_oi/)
+      orchestrator-agent/          # FastAPI orchestrator + ADK agents
+        app.py                     # FastAPI app and pipeline runner
+        Dockerfile
+        requirements.txt
+        .env.example
+        pulse_oi/
+          __init__.py
+          agent.py                 # root_agent: SequentialAgent wrapping ParallelAgent + synthesis
+          financial_agent.py       # FinancialIntelligenceAgent
+          sales_crm_agent.py       # SalesCrmIntelligenceAgent
+          synthesis_agent.py       # InsightSynthesisAgent
     reporting-delivery/
   data/
     ingest/
