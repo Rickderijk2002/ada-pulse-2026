@@ -16,4 +16,4 @@ wheels/
 sessions.db
 
 #VSCode Folder
-/.VSCode
+.VSCode
